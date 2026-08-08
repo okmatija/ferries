@@ -1,0 +1,18 @@
+Copyright (c) 2026 Matija Kecman. All rights reserved.
+
+This repository contains the published front-end (index.html) and the generated
+schedule data (data.js) of the Mediterranean Ferries website
+(https://okmatija.github.io/ferries/).
+
+No permission is granted to any person to copy, reproduce, modify, adapt,
+translate, distribute, republish, host, sublicense, or create derivative works
+from any part of this repository, in whole or in part, by any means or in any
+form, without the prior written permission of the copyright holder. Viewing the
+live website in a web browser does not grant any such rights.
+
+The schedule data is provided for personal, informational use only, on an
+"as is" basis and without warranty of any kind. It may be incomplete or out of
+date; always confirm times directly with the operator before travelling.
+
+For licensing enquiries (commercial use, data feeds, embedding), contact
+Matija Kecman <matijakecman@gmail.com>.

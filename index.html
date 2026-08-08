@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mediterranean Ferries</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+<style>
+  :root {
+    --ferry: #1d4ed8;
+    --cat: #b45309;
+    --accent: #e11d48;
+    --ink: #1e293b;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --bg: #f8fafc;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    display: grid;
+    grid-template-columns: minmax(360px, 4fr) 5fr;
+    height: 100vh;
+    height: 100dvh;  /* on mobile, exclude the browser's collapsing chrome so the bottom (map key) stays on screen */
+    overflow: hidden;
+  }
+  @media (max-width: 800px) {
+    body { grid-template-columns: 1fr; grid-template-rows: 45fr 55fr; }
+  }
+
+  /* ---------- left panel ---------- */
+  #panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; border-right: 1px solid var(--line); background: #fff; }
+  #panel header { padding: 12px 14px 6px; border-bottom: 1px solid var(--line); background: var(--bg); }
+  #panel h1 { font-size: 17px; margin: 0 0 8px; display: flex; align-items: baseline; justify-content: center; gap: 6px; position: relative; }
+  #aboutbtn {
+    position: absolute; right: 0; top: 50%; transform: translateY(-50%); flex: none;
+    width: 26px; height: 26px; padding: 0; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); background: #fff; color: var(--muted); cursor: pointer;
+  }
+  #aboutbtn svg { width: 16px; height: 16px; display: block; }
+  #aboutbtn:hover { border-color: var(--ferry); color: var(--ferry); }
+  #controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; }
+  /* the real date input sits invisibly on top of #daybtn, so the native
+     calendar picker still opens while the visible text stays DD-MM-YYYY */
+  #daywrap { position: relative; display: inline-flex; }
+  #daywrap input[type=date] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  #daybtn { display: inline-flex; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; }
+  #daybtn .cal { font-size: 12px; }
+  #controls button { font: inherit; padding: 4px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
+  #controls button:hover { background: var(--bg); }
+  #daylabel { font-size: 12.5px; color: var(--muted); width: 100%; text-align: center; }
+  #daylabel:empty { display: none; }
+  #daylabel .holiday { color: var(--accent); font-weight: 600; }
+  .typetoggle { display: inline-flex; gap: 4px; align-items: center; font-size: 12.5px; cursor: pointer; user-select: none; white-space: nowrap; }
+  .typetoggle input { accent-color: var(--ferry); }
+
+  /* From/To route filter + type toggles */
+  #odsearch { display: flex; flex-direction: column; gap: 6px; padding: 6px 14px 8px; border-bottom: 1px solid var(--line); background: #fff; }
+  #odrow { display: flex; gap: 6px; align-items: stretch; }
+  #odinputs { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  #odsearch input { width: 100%; font: inherit; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; }
+  #odsearch input:focus { outline: none; border-color: var(--ferry); }
+  #swapod {
+    flex: none; width: 30px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; color: var(--muted); cursor: pointer; font-size: 15px;
+  }
+  #swapod:hover { color: var(--ferry); border-color: var(--ferry); }
+  #filtertoggles { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+  #schedule { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); padding: 8px 8px 6px; position: sticky; top: 0; background: #fff;
+    border-bottom: 1px solid var(--line); z-index: 5;
+  }
+  tbody tr { border-bottom: 1px solid var(--line); cursor: pointer; }
+  tbody tr:hover { background: #eff6ff; }
+  /* the pinned row stays frozen just below the table header while the legs scroll */
+  tbody tr.pinned td {
+    position: sticky; top: var(--theadh, 31px); z-index: 4; background: #fef9c3;
+    box-shadow: inset 0 2px 0 #eab308, inset 0 -2px 0 #eab308;
+  }
+  tbody tr.pinned:hover td { background: #fef08a; }
+  /* individual legs of the pinned route, listed right below it */
+  tbody tr.leg, tbody tr.leg:hover { background: #fffbeb; cursor: default; }
+  tbody tr.leg td { padding: 3px 8px; font-size: 12px; color: var(--muted); }
+  tbody tr.leg td.dep, tbody tr.leg td.arr { font-weight: 500; }
+  td { padding: 7px 8px; vertical-align: top; }
+  td.dep { font-weight: 700; white-space: nowrap; width: 1%; font-variant-numeric: tabular-nums; }
+  td.dep .freqlbl { display: block; font-size: 10px; font-weight: 400; color: var(--muted); line-height: 1.15; }
+  td.arr { color: var(--muted); white-space: nowrap; width: 1%; font-variant-numeric: tabular-nums; }
+  td.route .ends { font-weight: 500; }
+  td.route .via { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+  td.route .note { display: block; font-size: 11.5px; color: #9a3412; margin-top: 1px; }
+  td.badge { width: 1%; min-width: 3.25rem; text-align: right; }
+  .linebadge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px;
+    border-radius: 99px; color: #fff; text-decoration: none; white-space: nowrap;
+  }
+  .linebadge.ferry { background: var(--ferry); }
+  .linebadge.catamaran { background: var(--cat); }
+  .linebadge:hover { filter: brightness(1.15); }
+  .op { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; line-height: 1.2; }
+  #empty { padding: 24px 14px; color: var(--muted); display: none; }
+
+  /* instant tooltip bubble (replaces the delayed native title popup) */
+  #tooltip {
+    position: fixed; z-index: 3000; display: none; pointer-events: none;
+    background: #1e293b; color: #fff; font: 12px/1.4 system-ui, sans-serif;
+    padding: 4px 8px; border-radius: 6px; max-width: 280px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+  }
+
+  /* ---------- about popup ---------- */
+  #about {
+    position: fixed; inset: 0; z-index: 2000; background: rgba(15, 23, 42, .45);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #about[hidden] { display: none; }
+  #aboutcard {
+    position: relative; background: #fff; border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .3);
+    max-width: 470px; width: calc(100% - 40px); max-height: calc(100% - 40px); overflow-y: auto;
+    padding: 0; font-size: 13px;
+  }
+  /* the header row + title stay frozen while the About body scrolls under them */
+  #aboutsticky { position: sticky; top: 0; z-index: 2; background: #fff; padding: 14px 20px 10px; border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+  #aboutsticky h2 { margin: 0; }
+  #aboutbody { padding: 12px 20px 12px; }
+  /* About header row: GitHub-issue button left, tip buttons centered, close right */
+  #abouthead { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-bottom: 12px; }
+  #aboutcard { text-align: center; }
+  #aboutcard h2 { margin: 0 0 8px; font-size: 16px; }
+  #aboutcard p { margin: 0 0 8px; }
+  #aboutcard ul { margin: 0 0 8px; padding-left: 18px; text-align: left; }
+  #aboutcard li { margin-bottom: 3px; }
+  #aboutstats { color: var(--muted); }
+  #abouttips { display: flex; justify-content: center; gap: 8px; margin: 0; justify-self: center; }
+  #aboutissue { justify-self: start; }
+  /* GitHub issue button, top right of the map (separate from the donation stack) */
+  #issuebar { position: absolute; top: 10px; right: 10px; z-index: 1100; }
+  #aboutcard a { color: var(--ferry); }
+  #aboutclose {
+    justify-self: end; border: none; background: none;
+    cursor: pointer; color: var(--muted); font-size: 18px; padding: 2px 4px;
+  }
+  #aboutclose:hover { color: var(--ink); }
+  /* tip / issue buttons, top right of the map */
+  #tipbar {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    z-index: 1100; display: flex; flex-direction: column; gap: 6px;
+  }
+  .tipbtn {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line);
+    background: #fff; cursor: pointer; padding: 0; text-decoration: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .2);
+  }
+  .tipbtn:hover { background: var(--bg); border-color: var(--muted); }
+  .tipbtn svg { width: 19px; height: 19px; display: block; }
+
+  /* ---------- map ---------- */
+  #map { min-height: 0; }
+  .leaflet-interactive:focus { outline: none; }  /* no focus box on a clicked port circle */
+  body.maponly { grid-template-columns: 1fr; }
+  body.maponly #panel { display: none; }
+  body.nomap { grid-template-columns: 1fr; }
+  body.nomap #map { display: none; }
+  #collapse {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    z-index: 1100; width: 22px; height: 56px; padding: 0;
+    border: 1px solid var(--line); border-left: none; border-radius: 0 8px 8px 0;
+    background: #fff; color: var(--muted); cursor: pointer; font-size: 11px;
+    box-shadow: 2px 0 6px rgba(0, 0, 0, .12);
+  }
+  #collapse:hover { color: var(--ferry); }
+  #collapse::after { content: '◀'; }
+  body.maponly #collapse::after { content: '▶'; }
+  @media (max-width: 800px) {
+    body.maponly { grid-template-rows: 1fr; }
+    body.nomap { grid-template-rows: 1fr; }
+    #collapse {
+      left: 50%; top: 0; transform: translateX(-50%);
+      width: 56px; height: 20px;
+      border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+    }
+    #collapse::after { content: '▲'; }
+    body.maponly #collapse::after { content: '▼'; }
+  }
+  .port-tip { font-weight: 600; }
+  .legend {
+    background: rgba(255,255,255,.92); padding: 8px 10px; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.2); font: 12px/1.5 system-ui, sans-serif; color: var(--ink);
+  }
+  @media (max-width: 800px) {
+    .legend { font: 11px/1.5 system-ui, sans-serif; padding: 6px 8px; }
+  }
+  .legend .sw { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+  .legend .swd { display: inline-flex; width: 14px; gap: 2px; align-items: center; justify-content: center; vertical-align: middle; margin: 0 5px 0 2px; }
+  .legend .swd i { width: 3px; height: 3px; border-radius: 50%; }
+  .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 7px; margin-left: 2px; }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <header>
+    <h1>Mediterranean Ferries
+      <button id="aboutbtn" title="Data source &amp; disclaimer" aria-label="About"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.9" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="4.9" r="1.15" fill="currentColor"/><rect x="7.05" y="7" width="1.9" height="5" rx="0.95" fill="currentColor"/></svg></button></h1>
+    <div id="controls">
+      <button id="prevday" title="Previous day">◀</button>
+      <span id="daywrap">
+        <button id="daybtn"><span id="dayfmt"></span><span class="cal">📅</span></button>
+        <input type="date" id="day" min="2026-01-01" max="2026-12-31" tabindex="-1" title="Pick a date">
+      </span>
+      <button id="nextday" title="Next day">▶</button>
+      <div id="daylabel"></div>
+    </div>
+  </header>
+
+  <div id="odsearch">
+    <div id="odrow">
+      <div id="odinputs">
+        <input type="search" id="fromq" placeholder="From" autocomplete="off" spellcheck="false"
+               title="Routes via here (before To)" aria-label="Filter routes by origin port">
+        <input type="search" id="toq" placeholder="To" autocomplete="off" spellcheck="false"
+               title="Routes via here (after From)" aria-label="Filter routes by destination port">
+      </div>
+      <button id="swapod" title="Swap From and To" aria-label="Swap From and To">⇅</button>
+    </div>
+    <div id="filtertoggles">
+      <label class="typetoggle" title="Conventional car ferries (ro-ro/ro-pax) that take vehicles — they carry foot passengers too. Classified by vessel type, not a guaranteed vehicle booking; confirm with the operator (one mixed case: Ionian Seaways Corfu–Sarandë also runs passenger-only hydrofoils)."><input type="checkbox" id="showferry" checked> Vehicles</label>
+      <label class="typetoggle" title="High-speed catamarans &amp; hydrofoils, foot passengers only (usually no vehicles). Classified by vessel type; confirm with the operator."><input type="checkbox" id="showcat" checked> Foot</label>
+      <label class="typetoggle" title="Allow changing boats at intermediate ports (connection times are not checked)"><input type="checkbox" id="transfers"> Transfers</label>
+      <label class="typetoggle" title="Show the map alongside the schedule; turn off for a full-width schedule"><input type="checkbox" id="showmap" checked> Map</label>
+    </div>
+  </div>
+
+  <div id="schedule">
+    <table>
+      <thead><tr><th>Dep</th><th>Route</th><th>Arr</th><th>Line</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty">No sailings found for this day / selection.</div>
+  </div>
+
+</div>
+
+<div id="map">
+  <button id="collapse" title="Show / hide the schedule panel" aria-label="Show / hide the schedule panel"></button>
+  <div id="tipbar">
+    <button class="tipbtn" data-tip="kofi" title="Leave a tip with Ko-fi" aria-label="Leave a tip with Ko-fi">
+      <svg viewBox="0 0 24 24"><path d="M3 5h15a3 3 0 0 1 3 3 3 3 0 0 1-3 3h-1v1a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V5zm14 2v2h1a1 1 0 0 0 0-2h-1z" fill="#13C3FF"/><path d="M8.4 8.7c.9-1 2.4-.7 2.9.4.5-1.1 2-1.4 2.9-.4.8.9.6 2.2-.3 3L11.3 14l-2.6-2.3c-.9-.8-1.1-2.1-.3-3z" fill="#fff"/></svg>
+    </button>
+    <button class="tipbtn" data-tip="paypal" title="Leave a tip with PayPal" aria-label="Leave a tip with PayPal">
+      <svg viewBox="0 0 24 24"><path d="M6.5 21l.6-4H4.9L7 3h6.4c3 0 4.9 1.7 4.5 4.4-.4 3.1-2.5 4.6-5.5 4.6h-2.3L9.2 21H6.5z" fill="#003087"/><path d="M9.7 22.8l.5-3.4H8.4L10.2 8h5.6c2.8 0 4.5 1.6 4.1 4.1-.4 2.9-2.4 4.3-5.2 4.3h-2l-.9 6.4H9.7z" fill="#0070ba" opacity=".85"/></svg>
+    </button>
+    <button class="tipbtn" data-tip="bmc" title="Leave a tip with Buy Me a Coffee" aria-label="Leave a tip with Buy Me a Coffee">
+      <svg viewBox="0 0 24 24"><path d="M5.5 7h13l-.4 2c1.2.3 2.4 1 2.4 1.8 0 1-1.8 1.7-3 1.7l-.9 8a1.6 1.6 0 0 1-1.6 1.5h-6a1.6 1.6 0 0 1-1.6-1.5L5.5 7z" fill="#ffdd00" stroke="#0d0c22" stroke-width="1.2"/><path d="M6 4.5c0-1 4-2 6-2s6 1 6 2l.4 2.5H5.6L6 4.5z" fill="#0d0c22"/></svg>
+    </button>
+    <button class="tipbtn" data-tip="github" title="Leave a tip with GitHub Sponsors" aria-label="Leave a tip with GitHub Sponsors">
+      <svg viewBox="0 0 24 24"><path d="M12 21S4 15.5 4 9.9C4 6.9 6.3 5 8.6 5c1.5 0 2.7.7 3.4 1.9C12.7 5.7 14 5 15.4 5 17.7 5 20 6.9 20 9.9 20 15.5 12 21 12 21z" fill="#db61a2"/></svg>
+    </button>
+  </div>
+  <div id="issuebar">
+    <a class="tipbtn" href="https://github.com/okmatija/ferries/issues/new" target="_blank" rel="noopener" title="Report an issue on GitHub" aria-label="Report an issue on GitHub">
+      <svg viewBox="0 0 16 16"><path fill="#24292f" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    </a>
+  </div>
+</div>
+
+<div id="about" hidden>
+  <div id="aboutcard" role="dialog" aria-modal="true" aria-labelledby="abouttitle">
+    <div id="aboutsticky">
+    <div id="abouthead">
+      <a class="tipbtn" id="aboutissue" href="https://github.com/okmatija/ferries/issues/new" target="_blank" rel="noopener" title="Report an issue on GitHub" aria-label="Report an issue on GitHub">
+        <svg viewBox="0 0 16 16"><path fill="#24292f" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <div id="abouttips">
+        <button class="tipbtn" data-tip="kofi" title="Leave a tip with Ko-fi" aria-label="Leave a tip with Ko-fi">
+          <svg viewBox="0 0 24 24"><path d="M3 5h15a3 3 0 0 1 3 3 3 3 0 0 1-3 3h-1v1a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V5zm14 2v2h1a1 1 0 0 0 0-2h-1z" fill="#13C3FF"/><path d="M8.4 8.7c.9-1 2.4-.7 2.9.4.5-1.1 2-1.4 2.9-.4.8.9.6 2.2-.3 3L11.3 14l-2.6-2.3c-.9-.8-1.1-2.1-.3-3z" fill="#fff"/></svg>
+        </button>
+        <button class="tipbtn" data-tip="paypal" title="Leave a tip with PayPal" aria-label="Leave a tip with PayPal">
+          <svg viewBox="0 0 24 24"><path d="M6.5 21l.6-4H4.9L7 3h6.4c3 0 4.9 1.7 4.5 4.4-.4 3.1-2.5 4.6-5.5 4.6h-2.3L9.2 21H6.5z" fill="#003087"/><path d="M9.7 22.8l.5-3.4H8.4L10.2 8h5.6c2.8 0 4.5 1.6 4.1 4.1-.4 2.9-2.4 4.3-5.2 4.3h-2l-.9 6.4H9.7z" fill="#0070ba" opacity=".85"/></svg>
+        </button>
+        <button class="tipbtn" data-tip="bmc" title="Leave a tip with Buy Me a Coffee" aria-label="Leave a tip with Buy Me a Coffee">
+          <svg viewBox="0 0 24 24"><path d="M5.5 7h13l-.4 2c1.2.3 2.4 1 2.4 1.8 0 1-1.8 1.7-3 1.7l-.9 8a1.6 1.6 0 0 1-1.6 1.5h-6a1.6 1.6 0 0 1-1.6-1.5L5.5 7z" fill="#ffdd00" stroke="#0d0c22" stroke-width="1.2"/><path d="M6 4.5c0-1 4-2 6-2s6 1 6 2l.4 2.5H5.6L6 4.5z" fill="#0d0c22"/></svg>
+        </button>
+        <button class="tipbtn" data-tip="github" title="Leave a tip with GitHub Sponsors" aria-label="Leave a tip with GitHub Sponsors">
+          <svg viewBox="0 0 24 24"><path d="M12 21S4 15.5 4 9.9C4 6.9 6.3 5 8.6 5c1.5 0 2.7.7 3.4 1.9C12.7 5.7 14 5 15.4 5 17.7 5 20 6.9 20 9.9 20 15.5 12 21 12 21z" fill="#db61a2"/></svg>
+        </button>
+      </div>
+      <button id="aboutclose" title="Close" aria-label="Close">✕</button>
+    </div>
+    <h2 id="abouttitle">About</h2>
+    </div>
+    <div id="aboutbody">
+    <p>
+      Every sailing is transcribed from the operators' official 2026 timetables:
+    </p>
+    <ul>
+      <li><a href="https://agencija-zolpp.hr/linije-2026/" target="_blank" rel="noopener">Agencija za obalni linijski pomorski promet</a>
+        — all Croatian state coastal lines and the commercial catamarans (<span data-srchost="agencija-zolpp.hr"></span>)</li>
+      <li><a href="https://www.jadrolinija.hr/en/travels/medunarodne_linije" target="_blank" rel="noopener">Jadrolinija international</a>
+        — Croatia–Italy (<span data-srchost="jadrolinija.hr"></span>)</li>
+      <li><a href="https://www.snav.it/en/orari-e-tratte" target="_blank" rel="noopener">SNAV</a>
+        — Ancona–Split departure calendar (<span data-srchost="snav.it"></span>)</li>
+      <li><a href="https://www.adriaferries.com/en/" target="_blank" rel="noopener">Adria Ferries</a>
+        — Italy–Albania (<span data-srchost="adriaferries.com"></span>)</li>
+      <li><a href="https://www.libertylines.it/en/" target="_blank" rel="noopener">Liberty Lines</a>
+        — Trieste–Istria–Mali Lošinj summer timetable (<span data-srchost="libertylines.it"></span>)</li>
+      <li><a href="https://adriatic-lines.com/schedule" target="_blank" rel="noopener">Adriatic Lines (Kompas)</a>
+        — Venice–Istria and Dubrovnik–Montenegro, from the operator's booking calendar (<span data-srchost="adriatic-lines.com"></span>)</li>
+      <li><a href="https://www.ventourisferries.com/en/routes/italy-albania-timetables/" target="_blank" rel="noopener">Ventouris Ferries</a>
+        — Bari–Durrës and Bari–Corfu–Igoumenitsa sailing calendars (<span data-srchost="ventourisferries.com"></span>)</li>
+      <li><a href="https://www.gnv.it/en/departures-calendar" target="_blank" rel="noopener">GNV</a>
+        — Bari–Durrës and the Tyrrhenian network (Genoa/Civitavecchia/Naples–Sardinia/Sicily), from the departures-calendar API (<span data-srchost="gnv.it"></span>)</li>
+      <li><a href="https://www.a-ships.com/brindisi-vlore/" target="_blank" rel="noopener">A-Ships Management</a>
+        — Brindisi–Vlorë (<span data-srchost="a-ships.com"></span>)</li>
+      <li><a href="https://www.nlg.it/" target="_blank" rel="noopener">NLG</a>
+        — Termoli–Tremiti jet and car ferry, Vieste–Tremiti (<span data-srchost="nlg.it"></span>)</li>
+      <li><a href="https://gstravel.eu/isole-tremiti-2026/" target="_blank" rel="noopener">GS Travel</a>
+        — Termoli–Tremiti fast line (<span data-srchost="gstravel.eu"></span>)</li>
+      <li><a href="https://trajekt.me/red-voznje/" target="_blank" rel="noopener">Morsko dobro (JPMD)</a>
+        — Kamenari–Lepetane shuttle, Bay of Kotor (<span data-srchost="trajekt.me"></span>)</li>
+      <li><a href="https://www.delfinoverde.it/" target="_blank" rel="noopener">Delfino Verde</a>
+        — Trieste gulf: Muggia, Grado–Lignano, Sistiana, Monfalcone (<span data-srchost="delfinoverde.it"></span>)</li>
+      <li><a href="https://ionianseaways.com/timetable/" target="_blank" rel="noopener">Ionian Seaways</a>
+        — Corfu–Sarandë (<span data-srchost="ionianseaways.com"></span>)</li>
+      <li><a href="https://www.grimaldi-lines.com/en/destination/ferries-to-greece/" target="_blank" rel="noopener">Grimaldi Lines</a>
+        — Italy–Greece (Ancona/Brindisi–Corfu/Igoumenitsa) and Tyrrhenian routes (<span data-srchost="grimaldi-lines.com"></span>)</li>
+      <li><a href="https://www.superfast.com/en-gb" target="_blank" rel="noopener">Superfast / Blue Star / ANEK (Attica)</a>
+        — Italy–Greece (Ancona/Bari/Venice–Corfu/Igoumenitsa/Patras) and the main Greek Aegean domestic lines (from Piraeus, Lavrio, Thessaloniki and Heraklion), from the group's booking API (<span data-srchost="superfast.com"></span>)</li>
+    </ul>
+    <p id="aboutstats"></p>
+    <p style="text-align: left;">
+      <b>How reliable is this?</b> Each source timetable is archived byte-for-byte (PDF, HTML or API response) in the
+      <a href="https://github.com/okmatija/ferries" target="_blank" rel="noopener">repository</a>
+      and its transcription passes automatic checks: times must increase along every route,
+      implied speeds must be physically plausible, validity periods must not overlap, and
+      Croatian public-holiday rules are modelled. The line badge on every schedule row links
+      straight to the official source PDF so you can verify anything yourself. Mistakes are
+      still possible — always confirm with the operator before travelling, and report errors
+      with the GitHub button on the map.
+    </p>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  // GitHub Pages cannot send X-Frame-Options, so refuse to run inside a foreign iframe
+  if (window.top !== window.self) {
+    try { window.top.location = window.location; } catch (_) { document.body.textContent = ''; }
+    return;
+  }
+  const D = window.FERRY_DATA;
+  if (!D || !D.lines || !D.ports) {
+    document.getElementById('rows').innerHTML =
+      '<tr><td colspan="4" style="color:#b91c1c">data.js missing or invalid — run tools/build_data.py</td></tr>';
+    return;
+  }
+  // About stats are computed from the data, so they can never go stale
+  {
+    const nSail = D.lines.reduce((a, l) => a + l.periods.reduce((b, p) => b + p.sailings.length, 0), 0);
+    document.getElementById('aboutstats').innerHTML =
+      `<b>${D.lines.length}</b> lines &middot; <b>${Object.keys(D.ports).length}</b> ports &middot; ` +
+      `<b>${nSail}</b> timetable entries`;
+    for (const el of document.querySelectorAll('[data-srchost]')) {
+      const n = D.lines.filter(l => (l.sourceUrl || '').includes(el.dataset.srchost)).length;
+      el.textContent = `${n} ${n === 1 ? 'line' : 'lines'}`;
+    }
+  }
+
+  const TIP_LINKS = {
+    kofi: 'https://ko-fi.com/okmatija',
+    paypal: 'https://paypal.me/okmatija',
+    bmc: 'https://buymeacoffee.com/okmatija',
+    github: 'https://github.com/sponsors/okmatija?frequency=one-time',
+  };
+
+  const HOLIDAYS = new Set(D.holidays2026 || []);
+  const $ = id => document.getElementById(id);
+
+  // accent-insensitive matching: "c" finds č/ć, "s" finds š, "d" finds đ (which
+  // has no Unicode decomposition, hence the explicit replace)
+  const normText = s => s.toLowerCase().replace(/đ/g, 'd')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const NORM_PORT = {};
+  const normPort = name => NORM_PORT[name] || (NORM_PORT[name] = normText(name));
+
+  // ---------- state ----------
+  // The From box is the single source of truth for port selection: clicking a
+  // dot writes the port name into it, and whenever the text uniquely resolves
+  // to a port that port's network shows on the map. Hovering a dot previews
+  // its network transiently (map only, never the schedule). Clicking open
+  // water clears everything, including the From/To boxes.
+  const state = {
+    date: null,          // "YYYY-MM-DD"
+    hoverPort: null,     // port dot under the cursor (canonical name)
+    pinnedSailing: null, // sailing pinned by clicking its schedule row
+    showFerry: true,
+    showCat: true,
+    transfers: false,    // reachability may change boats at intermediate ports (off by default)
+    suppressAutoPin: false, // set when the user manually unpins an auto-selected unique route
+  };
+  let selPort = null;    // port the From text uniquely resolves to (set in render)
+  let selTo = null;      // port the To text uniquely resolves to
+  let pairOn = false;    // both resolved: map shows only routes visiting both
+  function resolveUniquePort(text) {
+    const q = normText(text);
+    if (!q) return null;
+    let unique = null;   // null = none yet, a name = one match, false = ambiguous
+    for (const n of Object.keys(D.ports)) {
+      const nn = normPort(n);
+      if (nn === q) return n;
+      if (nn.includes(q)) unique = (unique === null) ? n : false;
+    }
+    return unique || null;
+  }
+
+  // default: today if within 2026, else summer sample date
+  const todayIso = new Date().toISOString().slice(0, 10);
+  state.date = (todayIso >= '2026-01-01' && todayIso <= '2026-12-31') ? todayIso : '2026-08-06';
+
+  // ---------- date helpers ----------
+  function isoWeekday(ds) {           // 1=Mon .. 7=Sun
+    const d = new Date(ds + 'T12:00:00Z');
+    return ((d.getUTCDay() + 6) % 7) + 1;
+  }
+  const DAYNAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const DAYSSHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const fmtDMY = ds => ds.split('-').reverse().join('-');   // "2026-08-07" -> "07-08-2026"
+  const effTime = s => s.dep || s.time || s.arr || null;
+
+  // ---------- schedule filtering ----------
+  function inRange(r, ds) { return (!r.from || ds >= r.from) && (!r.to || ds <= r.to); }
+
+  function sailingRuns(period, sailing, ds, wd, isHol) {
+    for (const r of (sailing.restrictions || [])) {
+      if (r.type === 'only' && !inRange(r, ds)) return false;
+      if (r.type === 'onlyDates' && !(r.dates || []).includes(ds)) return false;
+      if (r.type === 'notDates' && (r.dates || []).includes(ds)) return false;
+      if (r.type === 'not' && inRange(r, ds)) {
+        const dayHit = r.days ? r.days.includes(wd) : false;
+        const holHit = !!r.holidays && isHol;
+        if (dayHit || holHit) return false;
+      }
+    }
+    if (isHol) {
+      // Croatian convention: where a line publishes a "Sundays & holidays" table,
+      // that table applies on public holidays instead of the weekday one.
+      if (sailing.alsoOnHolidays) return true;
+      if (period.sailings.some(s => s.alsoOnHolidays)) return false;
+    }
+    return sailing.days.includes(wd);
+  }
+
+  function rowsForDate(ds) {
+    const wd = isoWeekday(ds), isHol = HOLIDAYS.has(ds);
+    const out = [];
+    for (const line of D.lines) {
+      if (line.type === 'ferry' && !state.showFerry) continue;
+      if (line.type === 'catamaran' && !state.showCat) continue;
+      const period = (line.periods || []).find(p => ds >= p.from && ds <= p.to);
+      if (!period) continue;
+      for (const s of period.sailings) {
+        if (!sailingRuns(period, s, ds, wd, isHol)) continue;
+        const stops = s.stops.filter(st => effTime(st) || st === s.stops[s.stops.length - 1]);
+        if (s.stops.length < 2) continue;
+        const first = s.stops[0], last = s.stops[s.stops.length - 1];
+        out.push({
+          line, sailing: s,
+          // frequency-based shuttles have no fixed departure times; show the headway instead
+          dep: s.frequency ? '' : effTime(first),
+          freq: s.frequency || null,
+          arr: effTime(last),
+          arrDerived: !!last.derived, arrNextDay: !!last.nextDay && !first.nextDay,
+          from: first.port, to: last.port,
+          stops: s.stops,
+        });
+      }
+    }
+    out.sort((a, b) => (a.dep || '').localeCompare(b.dep || ''));
+    return out;
+  }
+
+  // ports reachable from `origin` using the given sailings
+  // (sailings are directional: a stop can only lead to later stops of the same sailing).
+  // transfers=false: a single boarding at the origin; true: boat changes allowed (BFS).
+  // reverse=true flips the edges: ports from which `origin` can be REACHED.
+  function computeReachable(rows, origin, transfers, reverse) {
+    const adj = new Map();
+    for (const r of rows) {
+      for (let i = 0; i < r.stops.length; i++) {
+        const from = reverse ? r.stops[i].port : null;
+        let edges = adj.get(r.stops[i].port);
+        if (!edges) adj.set(r.stops[i].port, edges = new Set());
+        for (let j = i + 1; j < r.stops.length; j++) {
+          if (reverse) {
+            let e = adj.get(r.stops[j].port);
+            if (!e) adj.set(r.stops[j].port, e = new Set());
+            e.add(from);
+          } else edges.add(r.stops[j].port);
+        }
+      }
+    }
+    if (!transfers) return new Set(adj.get(origin) || []);
+    const seen = new Set([origin]), queue = [origin];
+    while (queue.length) {
+      for (const next of (adj.get(queue.pop()) || [])) {
+        if (!seen.has(next)) { seen.add(next); queue.push(next); }
+      }
+    }
+    seen.delete(origin);
+    return seen;
+  }
+
+  // every distinct stop-pattern in the whole network, regardless of date
+  let NETWORK_ALL = null;
+  function networkAll() {
+    if (NETWORK_ALL) return NETWORK_ALL;
+    NETWORK_ALL = [];
+    const seen = new Set();
+    for (const line of D.lines) {
+      for (const p of (line.periods || [])) {
+        for (const s of p.sailings) {
+          if (!s.stops || s.stops.length < 2) continue;
+          const key = line.type + '|' + s.stops.map(t => t.port).join('>');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          NETWORK_ALL.push({ type: line.type, stops: s.stops.map(t => ({ port: t.port })) });
+        }
+      }
+    }
+    return NETWORK_ALL;
+  }
+
+  // ---------- map ----------
+  const map = L.map('map', { zoomSnap: 0.5 }).setView([43.9, 15.9], 7);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+
+  const legend = L.control({ position: 'bottomleft' });
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'legend');
+    const solid = c => `<span class="sw" style="background:${c};margin-right:2px"></span>`;
+    const dotted = c => `<span class="swd">${`<i style="background:${c}"></i>`.repeat(3)}</span>`;
+    div.innerHTML =
+      solid('#1d4ed8') + '/' + dotted('#1d4ed8') + 'Car ferry sails on selected day/other days<br>' +
+      solid('#b45309') + '/' + dotted('#b45309') + 'Catamaran sails on selected day/other days<br>' +
+      '<span class="dot" style="background:#334155;margin-right:2px"></span>/' +
+      '<span class="dot" style="background:#fff;border:2px solid #334155;margin-left:4px"></span>' +
+      'Port with/without sailings on selected day';
+    return div;
+  };
+  legend.addTo(map);
+
+  const portMarkers = {};   // name -> circleMarker
+  const STYLE_ACTIVE  = { radius: 6, color: '#fff', weight: 1.5, fillColor: '#334155', fillOpacity: 0.95 };
+  const STYLE_IDLE    = { radius: 6, color: '#334155', weight: 1.5, fillColor: '#ffffff', fillOpacity: 0.9 };
+  // selected port matches the schedule's selection yellow
+  const STYLE_SEL     = { radius: 9, color: '#fff', weight: 2, fillColor: '#eab308', fillOpacity: 1 };
+  // ports not participating in the current selection: half-size versions of the
+  // two key dots, still solid/hollow by whether they have sailings that day
+  const STYLE_SMALL_ACTIVE = { radius: 3, color: '#fff', weight: 1, fillColor: '#334155', fillOpacity: 0.95 };
+  const STYLE_SMALL_IDLE   = { radius: 3, color: '#334155', weight: 1, fillColor: '#ffffff', fillOpacity: 0.9 };
+
+  const allLatLngs = [];
+  for (const [name, p] of Object.entries(D.ports)) {
+    const m = L.circleMarker([p.lat, p.lon], STYLE_ACTIVE).addTo(map);
+    m.bindTooltip(escapeHtml(name), { direction: 'top', offset: [0, -6], className: 'port-tip' });
+    m.on('mouseover', () => {
+      m.setStyle(STYLE_SEL);
+      state.hoverPort = name;   // map-only preview; the schedule doesn't churn on hover
+      render(false);
+    });
+    m.on('mouseout', () => {
+      if (state.hoverPort === name) { state.hoverPort = null; render(false); }
+      else restylePort(name);
+    });
+    m.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      // clicking a dot writes the port into the From box (again = clear it),
+      // replacing any pinned route
+      state.pinnedSailing = null;
+      state.suppressAutoPin = false;
+      setPinnedRoute(null);
+      $('fromq').value = (selPort === name) ? '' : name;
+      render(false);
+    });
+    portMarkers[name] = m;
+    allLatLngs.push([p.lat, p.lon]);
+  }
+  if (allLatLngs.length) map.fitBounds(allLatLngs, { padding: [30, 30] });
+
+  // click on open water: clear every annotation, including the From/To boxes
+  map.on('click', () => {
+    state.pinnedSailing = null;
+    state.hoverPort = null;
+    setPinnedRoute(null);
+    setHoverRoute(null);
+    $('fromq').value = '';
+    $('toq').value = '';
+    render(false);
+  });
+
+  let activePorts = new Set();
+  let reachable = new Set();   // ports reachable from the active port on the selected day
+  let reachOther = new Set();  // reachable on other days only
+  function restylePort(name) {
+    const m = portMarkers[name];
+    if (!m) return;
+    const small = activePorts.has(name) ? STYLE_SMALL_ACTIVE : STYLE_SMALL_IDLE;
+    const hov = state.pinnedSailing ? null : state.hoverPort;
+    const isSel = !state.pinnedSailing &&
+      (hov ? name === hov : (name === selPort || name === selTo));
+    let style;
+    if (state.pinnedSailing) style = small;  // route view: its own stop dots draw on top
+    else if (isSel) style = STYLE_SEL;
+    else if (hov || selPort || selTo) {
+      // same visual language as the key: solid dot = connected that day
+      // (solid line), hollow dot = connected on other days only (dotted line);
+      // ports not in the selection's network shrink to half size
+      if (reachable.has(name)) style = STYLE_ACTIVE;
+      else if (reachOther.has(name)) style = STYLE_IDLE;
+      else style = small;
+    }
+    else style = small;  // default view: everything small, so hovering doesn't churn sizes
+    if (!map.hasLayer(m)) m.addTo(map);
+    m.setStyle(style);
+  }
+
+  // a sailing's route: polyline + stop dots with per-stop time tooltips
+  function drawRoute(row) {
+    const pts = row.stops.map(s => D.ports[s.port]).filter(Boolean).map(p => [p.lat, p.lon]);
+    if (pts.length < 2) return null;
+    const color = row.line.type === 'ferry' ? '#1d4ed8' : '#b45309';
+    const layer = L.layerGroup().addTo(map);
+    L.polyline(pts, { color, weight: 4, opacity: 0.9 })
+      .on('click', e => L.DomEvent.stopPropagation(e)).addTo(layer);
+    // departure ring + stop dots on top
+    row.stops.forEach((s, i) => {
+      const p = D.ports[s.port]; if (!p) return;
+      L.circleMarker([p.lat, p.lon], {
+        radius: i === 0 ? 9 : 7, color, weight: 3,
+        fillColor: '#fff', fillOpacity: 1,
+      }).on('click', e => L.DomEvent.stopPropagation(e)).addTo(layer).bindTooltip(
+        `<span class="port-tip">${escapeHtml(s.port)}</span> ${escapeHtml(effTime(s) || '')}${s.nextDay ? ' +1' : ''}`,
+        { direction: 'top', offset: [0, -6], permanent: true }
+      );
+    });
+    return layer;
+  }
+
+  // hover and pinned routes live in separate layers, so hovering other rows
+  // (or moving onto the map) never disturbs a pinned route
+  let hoverRouteLayer = null, pinnedRouteLayer = null, pinnedRouteSailing = null;
+  function setHoverRoute(row) {
+    if (hoverRouteLayer) { map.removeLayer(hoverRouteLayer); hoverRouteLayer = null; }
+    if (row && row.sailing !== state.pinnedSailing) hoverRouteLayer = drawRoute(row);
+  }
+  function setPinnedRoute(row) {
+    if (pinnedRouteLayer) { map.removeLayer(pinnedRouteLayer); pinnedRouteLayer = null; }
+    pinnedRouteSailing = row ? row.sailing : null;
+    if (row) pinnedRouteLayer = drawRoute(row);
+  }
+
+  // connection network from the active (hovered or pinned) port: overlay of the boardable
+  // tail of every sailing. Solid = boardable on the selected day; thinner dotted = only on
+  // other days. No stop labels, to keep the overlay readable.
+  let reachLayer = null, reachKey = null;
+  function hideReachNetwork() {
+    if (reachLayer) { map.removeLayer(reachLayer); reachLayer = null; }
+    reachKey = null;
+    reachOther = new Set();
+  }
+  // toward=false: network FROM origin (boardable tails). toward=true: network
+  // TO origin — the mirror view, segments of sailings that feed into it.
+  function showReachNetwork(origin, rows, toward) {
+    const key = [toward ? 'to' : 'from', origin, state.date, state.showFerry, state.showCat, state.transfers].join('|');
+    if (reachKey === key) return;
+    hideReachNetwork();
+    reachKey = key;
+    const net = networkAll().filter(e => e.type === 'ferry' ? state.showFerry : state.showCat);
+    const allReach = computeReachable(net, origin, state.transfers, toward);
+    reachOther = new Set([...allReach].filter(p => !reachable.has(p)));
+
+    // forward: boardable tail — from the first stop you can be at, to the end.
+    // toward: feeding head — from the start to the last stop that leads to origin.
+    // (without transfers you can only board/alight at the origin itself)
+    const NOWHERE = new Set();
+    const seg = (stops, canBeAt) => {
+      const names = stops.map(s => s.port);
+      if (toward) {
+        for (let i = names.length - 1; i > 0; i--) {
+          if (names[i] === origin || canBeAt.has(names[i])) return names.slice(0, i + 1);
+        }
+        return null;
+      }
+      const i = names.findIndex(n => n === origin || canBeAt.has(n));
+      return (i >= 0 && i < names.length - 1) ? names.slice(i) : null;
+    };
+    const solid = new Map(), dashed = new Map();
+    for (const r of rows) {
+      const names = seg(r.stops, state.transfers ? reachable : NOWHERE); if (!names) continue;
+      const k = r.line.type + '|' + names.join('>');
+      if (!solid.has(k)) solid.set(k, { names, type: r.line.type });
+    }
+    for (const e of net) {
+      const names = seg(e.stops, state.transfers ? allReach : NOWHERE); if (!names) continue;
+      if (!names.some(n => reachOther.has(n))) continue;  // only paths adding other-day ports
+      const k = e.type + '|' + names.join('>');
+      if (!solid.has(k) && !dashed.has(k)) dashed.set(k, { names, type: e.type });
+    }
+    drawNet(solid, dashed);
+  }
+
+  function drawNet(solid, dashed) {
+    reachLayer = L.layerGroup().addTo(map);
+    const draw = (s, style) => {
+      const pts = s.names.map(n => D.ports[n]).filter(Boolean).map(p => [p.lat, p.lon]);
+      if (pts.length < 2) return;
+      L.polyline(pts, Object.assign(
+        { color: s.type === 'ferry' ? '#1d4ed8' : '#b45309', interactive: false }, style
+      )).addTo(reachLayer);
+    };
+    dashed.forEach(s => draw(s, { weight: 2.5, opacity: 0.55, dashArray: '1 7' }));
+    solid.forEach(s => draw(s, { weight: 4, opacity: 0.8 }));
+    for (const lyr of [pinnedRouteLayer, hoverRouteLayer]) {
+      if (lyr) lyr.eachLayer(l => l.bringToFront && l.bringToFront());
+    }
+  }
+
+  // both From and To resolved: show only sailings visiting From then To in
+  // that order, drawn as the segment between them
+  function showPairNetwork(a, b, rows) {
+    const key = ['pair', a, b, state.date, state.showFerry, state.showCat].join('|');
+    if (reachKey === key) return;
+    hideReachNetwork();
+    reachKey = key;
+    const seg = stops => {
+      const names = stops.map(s => s.port);
+      const i = names.indexOf(a);
+      const j = names.indexOf(b, i + 1);
+      return (i >= 0 && j > i) ? names.slice(i, j + 1) : null;
+    };
+    const solid = new Map(), dashed = new Map();
+    for (const r of rows) {
+      const names = seg(r.stops); if (!names) continue;
+      const k = r.line.type + '|' + names.join('>');
+      if (!solid.has(k)) solid.set(k, { names, type: r.line.type });
+    }
+    const net = networkAll().filter(e => e.type === 'ferry' ? state.showFerry : state.showCat);
+    for (const e of net) {
+      const names = seg(e.stops); if (!names) continue;
+      const k = e.type + '|' + names.join('>');
+      if (!solid.has(k) && !dashed.has(k)) dashed.set(k, { names, type: e.type });
+    }
+    reachable = new Set();
+    solid.forEach(s => s.names.forEach(n => reachable.add(n)));
+    const dports = new Set();
+    dashed.forEach(s => s.names.forEach(n => dports.add(n)));
+    reachOther = new Set([...dports].filter(n => !reachable.has(n)));
+    for (const p of [a, b]) { reachable.delete(p); reachOther.delete(p); }
+    drawNet(solid, dashed);
+  }
+
+  // ---------- rendering ----------
+  function render(refit) {
+    const ds = state.date;
+    $('day').value = ds;
+    const wd = isoWeekday(ds), isHol = HOLIDAYS.has(ds);
+    $('dayfmt').textContent = `${DAYSSHORT[wd]} ${fmtDMY(ds)}`;
+    $('daylabel').innerHTML =
+      isHol ? '<span class="holiday">Croatian public holiday: Sunday/holiday timetables apply on most lines</span>' : '';
+
+    const rows = rowsForDate(ds);
+
+    // a pinned sailing survives only while it still runs on the selected day
+    let pinnedRow = null;
+    if (state.pinnedSailing) {
+      pinnedRow = rows.find(r => r.sailing === state.pinnedSailing) || null;
+      if (!pinnedRow) state.pinnedSailing = null;
+    }
+
+    // From/To boxes: with both set the match is DIRECTIONAL — a stop matching From
+    // must come before a stop matching To; a single box just means the route calls
+    // at a matching port. Empty boxes match everything.
+    const fq = normText($('fromq').value), tq = normText($('toq').value);
+    const callsAt = q => r => r.stops.some(s => normPort(s.port).includes(q));
+    const inOrder = r => {
+      let seenFrom = false;
+      for (const s of r.stops) {
+        const n = normPort(s.port);
+        if (seenFrom && n.includes(tq)) return true;
+        if (n.includes(fq)) seenFrom = true;
+      }
+      return false;
+    };
+    let filtered = rows;
+    if (fq && tq) filtered = filtered.filter(inOrder);
+    else if (fq) filtered = filtered.filter(callsAt(fq));
+    else if (tq) filtered = filtered.filter(callsAt(tq));
+
+    // auto-select: when From and To pick out exactly one sailing, pin it (unless the
+    // user just unpinned it) so its route draws on the map and its legs expand
+    if (fq && tq && !pinnedRow && !state.suppressAutoPin && filtered.length === 1) {
+      state.pinnedSailing = filtered[0].sailing;
+      pinnedRow = filtered[0];
+    }
+
+    activePorts = new Set();
+    rows.forEach(r => r.stops.forEach(s => activePorts.add(s.port)));
+    selPort = resolveUniquePort($('fromq').value);
+    selTo = resolveUniquePort($('toq').value);
+    const hov = state.pinnedSailing ? null : state.hoverPort;
+    pairOn = !state.pinnedSailing && !hov && !!selPort && !!selTo && selPort !== selTo;
+    const focus = hov || (state.pinnedSailing ? null : selPort);
+    if (pairOn) {
+      showPairNetwork(selPort, selTo, rows);   // sets reachable/reachOther itself
+    } else if (focus) {
+      reachable = computeReachable(rows, focus, state.transfers);
+      showReachNetwork(focus, rows, false);
+    } else if (selTo && !state.pinnedSailing) {
+      // To-only: mirror view — routes arriving at the port
+      reachable = computeReachable(rows, selTo, state.transfers, true);
+      showReachNetwork(selTo, rows, true);
+    } else {
+      reachable = new Set();
+      hideReachNetwork();
+    }
+    Object.keys(portMarkers).forEach(restylePort);
+
+    // while a route is pinned the schedule shows only that route and its legs
+    const listRows = pinnedRow ? [pinnedRow] : filtered;
+
+    const tbody = $('rows');
+    tbody.innerHTML = '';
+    for (const row of listRows) {
+      const tr = document.createElement('tr');
+      // in the pinned row, ports matching the From/To text are bolded
+      const hl = name => {
+        const n = normPort(name);
+        return (row === pinnedRow && ((fq && n.includes(fq)) || (tq && n.includes(tq))))
+          ? `<b>${escapeHtml(name)}</b>` : escapeHtml(name);
+      };
+      const via = row.stops.length > 2
+        ? `<span class="via">via ${row.stops.slice(1, -1).map(s => `${hl(s.port)} ${escapeHtml(effTime(s) || '')}`).join(' · ')}</span>` : '';
+      const note = row.sailing.note ? `<span class="note" title="${escapeHtml(row.sailing.note)}">ⓘ ${escapeHtml(shorten(row.sailing.note, 70))}</span>` : '';
+      const arrTxt = row.arr
+        ? `${row.arrDerived ? '~' : ''}${row.arr}${row.arrNextDay ? ' +1' : ''}`
+        : '—';
+      tr.innerHTML =
+        `<td class="dep">${row.freq
+          ? `<span class="freqlbl">every</span>${escapeHtml(String(row.freq.headwayMin))} min`
+          : escapeHtml(row.dep || '—')}</td>` +
+        `<td class="route"><span class="ends">${hl(row.from)} → ${hl(row.to)}</span>${via}${note}</td>` +
+        `<td class="arr" title="${row.arrDerived ? 'arrival derived from the duration stated in the official timetable' : ''}">${escapeHtml(arrTxt)}</td>` +
+        `<td class="badge"><a class="linebadge ${row.line.type}" target="_blank" rel="noopener" ` +
+        `href="${escapeHtml(row.line.sourceUrl)}" title="${escapeHtml(row.line.name)} — official 2026 timetable PDF (${escapeHtml(row.line.operator)})` +
+        `${row.line.remark || row.line.note ? ' — ' + escapeHtml(row.line.remark || row.line.note) : ''}">${escapeHtml(String(row.line.line))}</a>` +
+        `<span class="op">${escapeHtml(row.line.operator)}</span></td>`;
+      if (row.sailing === state.pinnedSailing) tr.classList.add('pinned');
+      tr.addEventListener('mouseenter', () => setHoverRoute(row));
+      tr.addEventListener('mouseleave', () => setHoverRoute(null));
+      tr.addEventListener('click', () => {
+        if (state.pinnedSailing === row.sailing) {  // unpin: legs disappear, sort order returns
+          state.pinnedSailing = null;
+          state.suppressAutoPin = true;  // don't immediately re-auto-select the same unique route
+          setPinnedRoute(null);
+          render(false);
+        } else {
+          // a pinned route suppresses the port overlay, but the
+          // typed From/To text is kept and comes back on unpin
+          state.pinnedSailing = row.sailing;
+          state.hoverPort = null;
+          render(false);
+        }
+      });
+      tbody.appendChild(tr);
+      if (row === pinnedRow && row.stops.length > 2) {
+        for (let i = 0; i < row.stops.length - 1; i++) {
+          const a = row.stops[i], b = row.stops[i + 1];
+          const legArr = b.arr || b.time || b.dep;
+          const legTr = document.createElement('tr');
+          legTr.className = 'leg';
+          legTr.innerHTML =
+            `<td class="dep">${escapeHtml(effTime(a) || '—')}</td>` +
+            `<td class="route">↳ ${hl(a.port)} → ${hl(b.port)}</td>` +
+            `<td class="arr">${legArr ? (b.derived ? '~' : '') + escapeHtml(legArr) + (b.nextDay && !a.nextDay ? ' +1' : '') : '—'}</td>` +
+            `<td class="badge"></td>`;
+          tbody.appendChild(legTr);
+        }
+      }
+    }
+    $('empty').style.display = listRows.length ? 'none' : 'block';
+    setHoverRoute(null);  // the table was rebuilt, so no row is hovered any more
+    if ((pinnedRow && pinnedRow.sailing) !== pinnedRouteSailing) setPinnedRoute(pinnedRow);
+    if (refit && allLatLngs.length) map.fitBounds(allLatLngs, { padding: [30, 30] });
+  }
+
+  function shorten(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---------- controls ----------
+  $('day').addEventListener('change', e => { if (e.target.value) { state.date = e.target.value; render(false); } });
+  // clicks land on the invisible input over #daybtn; Enter/Space activate the button itself
+  const openPicker = () => { if ($('day').showPicker) { try { $('day').showPicker(); } catch (_) {} } };
+  $('day').addEventListener('click', openPicker);
+  $('daybtn').addEventListener('click', openPicker);
+  $('prevday').addEventListener('click', () => shiftDay(-1));
+  $('nextday').addEventListener('click', () => shiftDay(1));
+  function shiftDay(n) {
+    const d = new Date(state.date + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
+    const ds = d.toISOString().slice(0, 10);
+    if (ds >= '2026-01-01' && ds <= '2026-12-31') { state.date = ds; render(false); }
+  }
+  // collapse the schedule panel to a map-only view (tab on the panel/map boundary)
+  const collapseBtn = $('collapse');
+  L.DomEvent.disableClickPropagation(collapseBtn);
+  L.DomEvent.disableClickPropagation($('tipbar'));
+  L.DomEvent.disableClickPropagation($('issuebar'));
+  collapseBtn.addEventListener('click', () => {
+    document.body.classList.toggle('maponly');
+    map.invalidateSize();
+  });
+  $('showferry').addEventListener('change', e => { state.showFerry = e.target.checked; render(false); });
+  $('showcat').addEventListener('change', e => { state.showCat = e.target.checked; render(false); });
+  $('transfers').addEventListener('change', e => { state.transfers = e.target.checked; render(false); });
+  // "Map" toggle: off hides the map so the schedule gets the full width
+  $('showmap').addEventListener('change', e => {
+    document.body.classList.toggle('nomap', !e.target.checked);
+    if (e.target.checked) map.invalidateSize();
+  });
+  for (const id of ['fromq', 'toq']) {
+    $(id).addEventListener('input', () => {
+      state.suppressAutoPin = false;  // a new From/To may auto-select a unique route again
+      if (state.pinnedSailing) { state.pinnedSailing = null; setPinnedRoute(null); }  // show the filtered list
+      render(false);
+    });
+  }
+  $('swapod').addEventListener('click', () => {
+    const f = $('fromq').value;
+    $('fromq').value = $('toq').value;
+    $('toq').value = f;
+    state.suppressAutoPin = false;
+    if (state.pinnedSailing) { state.pinnedSailing = null; setPinnedRoute(null); }
+    render(false);
+  });
+  // ---------- about popup + tips ----------
+  const closeAbout = () => { $('about').hidden = true; };
+  $('aboutbtn').addEventListener('click', () => { $('about').hidden = false; });
+  $('aboutclose').addEventListener('click', closeAbout);
+  $('about').addEventListener('click', e => { if (e.target === $('about')) closeAbout(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('about').hidden) closeAbout(); });
+  for (const b of document.querySelectorAll('.tipbtn[data-tip]')) {
+    const url = TIP_LINKS[b.dataset.tip];
+    if (url) b.addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+    else b.title += ' — coming soon';
+  }
+
+  // ---------- instant tooltips ----------
+  // native title bubbles appear after a fixed browser delay; steal the title
+  // attribute on first hover and show our own bubble immediately instead
+  const tipEl = document.createElement('div');
+  tipEl.id = 'tooltip';
+  document.body.appendChild(tipEl);
+  let tipTarget = null;
+  const hideTip = () => { tipEl.style.display = 'none'; tipTarget = null; };
+  document.addEventListener('mouseover', e => {
+    const t = e.target.closest && e.target.closest('[title], [data-tt]');
+    if (!t) return;
+    if (t.hasAttribute('title')) {           // re-sync in case the title was updated
+      const v = t.getAttribute('title');
+      t.removeAttribute('title');
+      if (v) t.dataset.tt = v; else delete t.dataset.tt;
+    }
+    if (!t.dataset.tt || t === tipTarget) return;
+    tipTarget = t;
+    tipEl.textContent = t.dataset.tt;
+    tipEl.style.display = 'block';
+    const r = t.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    const x = Math.min(Math.max(4, r.left + r.width / 2 - w / 2), innerWidth - w - 4);
+    let y = r.bottom + 6;
+    if (y + h > innerHeight - 4) y = r.top - h - 6;
+    tipEl.style.left = x + 'px';
+    tipEl.style.top = y + 'px';
+  });
+  document.addEventListener('mouseout', e => {
+    if (tipTarget && !tipTarget.contains(e.relatedTarget)) hideTip();
+  });
+  document.addEventListener('click', hideTip, true);
+  document.addEventListener('scroll', hideTip, true);
+
+  render(true);
+  // sticky offset for the pinned row = actual header height
+  document.documentElement.style.setProperty('--theadh', document.querySelector('thead').offsetHeight + 'px');
+})();
+</script>
+</body>
+</html>
+
+<!-- deployed via GitHub Actions Pages workflow -->
